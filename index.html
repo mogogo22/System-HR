@@ -1837,14 +1837,20 @@ function vWage(){
  <div class="bar"><b>تكلفة الموظفين على الشركة · ${esc(payMonth)}</b></div>`+
  (R.length?`<div class="tw"><table style="min-width:900px"><tr><th>الموظف</th><th>الإجمالي المستحق</th><th>تأمينات الموظف</th><th>ضريبة</th><th>الصافي</th><th>تأمينات الشركة</th><th>التكلفة الكلية</th></tr>${R.map(({e,p})=>{const er=p.earned??p.gross;return `<tr><td>${esc(e.name)}${e.noins==='غير مؤمن'?' <span class="tag warn">غير مؤمن</span>':''}</td><td>${fmt(er)}</td><td>${fmt(p.ins)}</td><td>${fmt(p.tax||0)}</td><td>${fmt(p.net)}</td><td>${fmt(p.insR||0)}</td><td><b>${fmt(er+(p.insR||0))}</b></td></tr>`}).join('')}<tr><td><b>الإجمالي</b></td><td><b>${fmt(T.e)}</b></td><td><b>${fmt(T.i)}</b></td><td><b>${fmt(T.x)}</b></td><td><b>${fmt(T.n)}</b></td><td><b>${fmt(T.r)}</b></td><td><b>${fmt(T.c)}</b></td></tr></table></div>`:'<div class="card empty">مفيش موظفين في الشهر ده.</div>');
 }
-/* ===== فاير بيس: دخول + Firestore + صلاحيات + سجل عمليات ===== */
-const FBCFG={apiKey:'',authDomain:'',projectId:'',storageBucket:'',messagingSenderId:'',appId:''};
-const FB={on:!!(FBCFG.apiKey&&FBCFG.projectId),ready:false,user:null,role:'',name:'',t:null,busy:false,again:false,st:'',unsub:null};
-const FX={},ROLES={admin:'مدير النظام',editor:'محرر',viewer:'عرض فقط'},FCH=350000,FMK={att:1,ota:1,paid:1,pay:1,snap:1};
-let FDOCS={},FINC={},FLAST=null,FUL=[];
-const dr=(...p)=>FX.Fs.doc(FX.db,...p),cr=n=>FX.Fs.collection(FX.db,n),cln=o=>JSON.parse(JSON.stringify(o));
-(function(){const s=document.createElement('style');s.textContent='body.ro .fab,body.ro .btn.pri,body.ro .btn.bad,body.ro .btn.dng{display:none!important}';document.head.appendChild(s)})();
-/* ===== تقسيم الداتا لمستندات (كل مستند أقل من 350KB) ===== */
+/* ===== فاير بيس بدون تسجيل دخول: Firestore + تشفير بكلمة سر النظام ===== */
+const FBCFG={apiKey:"AIzaSyBJrkYMZa04Co4_cHdTq4arF0MZzEdYYNA",authDomain:"system-hr-f81c2.firebaseapp.com",projectId:"system-hr-f81c2",storageBucket:"system-hr-f81c2.firebasestorage.app",messagingSenderId:"586109236548",appId:"1:586109236548:web:55a3dde4eb43c648cf5311"};
+const FB={on:!!(FBCFG.apiKey&&FBCFG.projectId),ready:false,key:null,meta:null,t:null,busy:false,again:false,st:'',unsub:null};
+const FX={},FCH=300000,FMK={att:1,ota:1,paid:1,pay:1,snap:1},FBAD='\u0000bad',FFORCE=new Set();
+let FDOCS={},FINC={},FQ=Promise.resolve();
+const dr=(...p)=>FX.Fs.doc(FX.db,...p),cr=n=>FX.Fs.collection(FX.db,n);
+function vUsers(){return ''}function vAudit(){return ''}
+/* ===== تشفير ===== */
+const fbB2S=u=>{let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)};
+const fbS2B=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function fbKey(p,salt){const m=await crypto.subtle.importKey('raw',new TextEncoder().encode(p),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:250000,hash:'SHA-256'},m,{name:'AES-GCM',length:256},true,['encrypt','decrypt'])}
+async function fbEnc(t){const iv=crypto.getRandomValues(new Uint8Array(12)),c=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},FB.key,new TextEncoder().encode(t))),o=new Uint8Array(12+c.length);o.set(iv);o.set(c,12);return fbB2S(o)}
+async function fbDec(s){const b=fbS2B(s);return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:b.subarray(0,12)},FB.key,b.subarray(12)))}
+/* ===== تقسيم الداتا لمستندات صغيرة ===== */
 function fbPack(D,pre,arr,isMap){
  const enc=new TextEncoder();let cur=[],sz=0,n=0;
  const out=()=>{if(cur.length){D[pre+'.'+n++]=JSON.stringify(isMap?Object.fromEntries(cur):cur);cur=[];sz=0}};
@@ -1864,6 +1870,7 @@ function fbSplit(d){
 function fbJoin(D){
  const d=Object.assign(DB0(),{att:{},leaves:[],pay:{},departments:[],employees:[]});
  Object.keys(D).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})).forEach(id=>{
+  if(!D[id])return;
   const p=id.split('.'),t=p[0],k=p[1];let v;try{v=JSON.parse(D[id])}catch(e){return}
   if(t==='o')d[k]=v;
   else if(t==='a')d[k]=(Array.isArray(d[k])?d[k]:[]).concat(v);
@@ -1872,31 +1879,13 @@ function fbJoin(D){
  return d;
 }
 function fbNorm(){db.cfg=Object.assign({},CFG0,db.cfg);LATE=db.cfg.late;ensureDB();ensure3();ensure4();ALS=null}
-/* ===== سجل العمليات: الفرق بين النسخة القديمة والجديدة ===== */
-function auditDiff(){
- const A=FLAST||{},B=db,o=[],L={employees:'موظف',leaves:'إجازة',loans:'سلفة/قرض',raises:'زيادة',eos:'تسوية',bon:'مكافأة',exp:'مصروف',reviews:'تقييم',docs:'مستند',recruits:'مرشح',trn:'دورة',ast:'عهدة',disc:'مخالفة',ann:'إعلان',hol:'إجازة رسمية',shifts:'وردية',alh:'تعديل بدلات'};
- const nm=id=>((B.employees||[]).concat(A.employees||[]).find(e=>e.id===id)||{}).name||'';
- const lab=(k,x)=>k==='employees'?x.name:(nm(x.emp)||x.title||x.name||x.item||x.type||'');
- for(const k in L){
-  const a=A[k]||[],b=B[k]||[],ma=new Map(a.map(x=>[x.id,x])),mb=new Map(b.map(x=>[x.id,x]));
-  b.forEach(x=>{const p=ma.get(x.id);if(!p)o.push(`إضافة ${L[k]}: ${lab(k,x)}`);else if(JSON.stringify(x)!==JSON.stringify(p)){const f=Object.keys(x).filter(z=>JSON.stringify(x[z])!==JSON.stringify(p[z]));o.push(`تعديل ${L[k]}: ${lab(k,x)} (${f.join('، ')})`)}});
-  a.forEach(x=>{if(!mb.has(x.id))o.push(`حذف ${L[k]}: ${lab(k,x)}`)});
- }
- const cnt=(k,t)=>{const a=A[k]||{},b=B[k]||{};let n=0;new Set([...Object.keys(a),...Object.keys(b)]).forEach(z=>{if(JSON.stringify(a[z])!==JSON.stringify(b[z]))n++});if(n)o.push(`${t}: ${n} سجل`)};
- cnt('att','تعديل حضور وانصراف');cnt('pay','تعديل مكافآت وخصومات شهرية');cnt('paid','تغيير حالة الصرف');cnt('ota','قرارات إضافي');
- const sa=Object.keys(A.snap||{}),sb=Object.keys(B.snap||{});
- sb.filter(m=>!sa.includes(m)).forEach(m=>o.push('اعتماد مرتبات '+m));sa.filter(m=>!sb.includes(m)).forEach(m=>o.push('فك اعتماد مرتبات '+m));
- const ca=A.cfg||{},cb=B.cfg||{},ck=Object.keys(cb).filter(z=>JSON.stringify(ca[z])!==JSON.stringify(cb[z]));if(ck.length)o.push('تعديل إعدادات: '+ck.join('، '));
- const da=A.departments||[],dd=B.departments||[];dd.filter(x=>!da.includes(x)).forEach(x=>o.push('إضافة قسم: '+x));da.filter(x=>!dd.includes(x)).forEach(x=>o.push('حذف قسم: '+x));
- return o;
-}
-/* ===== الكتابة للسحابة (بتكتب بس المستندات اللي اتغيرت) ===== */
+/* ===== الحفظ في السحابة (بيكتب بس المستندات اللي اتغيرت، مشفّرة) ===== */
 function fbStatus(s){FB.st=s;const e=document.getElementById('fbs');if(!e)return;const M={saving:['⏳ بيحفظ…','warn'],ok:['☁ متزامن','ok'],err:['⚠ مشكلة اتصال','bad'],off:['📴 أوفلاين','warn']}[s]||['',''];e.textContent=M[0];e.className='tag '+M[1]}
 addEventListener('offline',()=>fbStatus('off'));addEventListener('online',()=>fbStatus(FB.busy?'saving':'ok'));
 function fbQueue(){clearTimeout(FB.t);FB.t=setTimeout(fbFlush,300);fbStatus('saving')}
 function fbErr(e){
  const c=e&&e.code||'';fbStatus('err');
- if(c==='permission-denied'){toast('مفيش صلاحية لحفظ التغيير ده، اتلغى','bad');db=fbJoin(FDOCS);fbNorm();render()}
+ if(c==='permission-denied'){toast('قواعد فاير بيس رافضة الكتابة. راجع الـRules','bad');db=fbJoin(FDOCS);fbNorm();render()}
  else toast('مقدرش يحفظ ('+c+'). هيحاول تاني لما الاتصال يرجع','warn');
 }
 async function fbFlush(){
@@ -1904,179 +1893,118 @@ async function fbFlush(){
  if(FB.busy){FB.again=true;return}
  FB.busy=true;
  try{
-  const N=fbSplit(db),adds=Object.keys(N).filter(id=>FDOCS[id]!==N[id]),dels=Object.keys(FDOCS).filter(id=>!(id in N));
+  const N=fbSplit(db),adds=Object.keys(N).filter(id=>FDOCS[id]!==N[id]||FFORCE.has(id)),dels=Object.keys(FDOCS).filter(id=>!(id in N)&&(FDOCS[id]!==''||FFORCE.has(id)));
   if(!adds.length&&!dels.length){fbStatus('ok');return}
-  if(dels.length>5&&dels.length>Object.keys(FDOCS).length*.5&&!await ask({title:'حذف كبير',msg:`العملية دي هتمسح ${fmt(dels.length)} مستند من السحابة. تأكيد؟`,ok:'أكّد',danger:1})){db=fbJoin(FDOCS);fbNorm();render();fbStatus('ok');return}
-  const items=FLAST?auditDiff():['رفع بيانات أولية من الجهاز'];
-  const ops=[...adds.map(id=>[1,id]),...dels.map(id=>[0,id])];
-  for(let i=0;i<ops.length;i+=15){
+  const live=Object.values(FDOCS).filter(v=>v).length;
+  if(dels.length>5&&dels.length>live*.5&&!await ask({title:'حذف كبير',msg:`العملية دي هتمسح بيانات ${fmt(dels.length)} مستند من السحابة. تأكيد؟`,ok:'أكّد',danger:1})){db=fbJoin(FDOCS);fbNorm();render();fbStatus('ok');return}
+  const aset=new Set(adds),ids=[...adds,...dels],E={};
+  await Promise.all(ids.map(async id=>{E[id]=await fbEnc(aset.has(id)?N[id]:'')}));
+  for(let i=0;i<ids.length;i+=400){
    const b=FX.Fs.writeBatch(FX.db);
-   ops.slice(i,i+15).forEach(([s,id])=>{const r=dr('hr',id);s?b.set(r,{j:N[id],u:FB.user.uid,t:FX.Fs.serverTimestamp()}):b.delete(r)});
+   ids.slice(i,i+400).forEach(id=>b.set(dr('hr',id),{j:E[id],t:FX.Fs.serverTimestamp()}));
    await b.commit();
   }
-  adds.forEach(id=>FDOCS[id]=N[id]);dels.forEach(id=>delete FDOCS[id]);FLAST=cln(db);fbStatus('ok');
-  if(items.length)FX.Fs.addDoc(cr('audit'),{ts:FX.Fs.serverTimestamp(),uid:FB.user.uid,email:FB.user.email||'',items:items.slice(0,25).concat(items.length>25?['… و'+(items.length-25)+' عملية أخرى']:[])}).catch(()=>{});
+  adds.forEach(id=>FDOCS[id]=N[id]);dels.forEach(id=>FDOCS[id]='');FFORCE.clear();fbStatus('ok');
  }catch(e){fbErr(e)}
  finally{FB.busy=false;if(FB.again){FB.again=false;fbQueue()}else if(Object.keys(FINC).length)fbApply()}
 }
-/* ===== استقبال تحديثات المستخدمين التانيين ===== */
+/* ===== استقبال تحديثات الأجهزة التانية ===== */
 function fbApply(){
  if(document.querySelector('.ov')){setTimeout(fbApply,1500);return}
- let ch=false;
- for(const id in FINC){const j=FINC[id];if(j===null){if(id in FDOCS){delete FDOCS[id];ch=true}}else if(typeof j==='string'&&FDOCS[id]!==j){FDOCS[id]=j;ch=true}}
- FINC={};if(!ch)return;
- db=fbJoin(FDOCS);fbNorm();FLAST=cln(db);render();toast('اتحدّثت البيانات من مستخدم تاني','info');
+ let ch=false,fx=false;
+ for(const id in FINC){const j=FINC[id];if(j===FBAD){FFORCE.add(id);fx=true}else if(FDOCS[id]!==j){FDOCS[id]=j;ch=true}}
+ FINC={};
+ if(ch){db=fbJoin(FDOCS);fbNorm();render();toast('اتحدّثت البيانات من جهاز تاني','info')}
+ if(fx)fbQueue();
 }
 function fbListen(){
  let first=true;
- FB.unsub=FX.Fs.onSnapshot(cr('hr'),snap=>{
-  if(first){first=false;fbFirst(snap);return}
-  snap.docChanges().forEach(ch=>{FINC[ch.doc.id]=ch.type==='removed'?null:ch.doc.data().j});
-  if(!FB.t&&!FB.busy)fbApply();
+ FB.unsub=FX.Fs.onSnapshot(cr('hr'),{includeMetadataChanges:true},snap=>{
+  if(first&&snap.empty&&snap.metadata.fromCache&&navigator.onLine)return;
+  const f=first;first=false;FQ=FQ.then(()=>fbSnap(snap,f)).catch(()=>{});
  },e=>{fbStatus('err');toast('مشكلة في الاتصال بالسحابة ('+(e.code||'')+')','bad')});
 }
-async function fbFirst(snap){
- FDOCS={};snap.forEach(d=>{const j=d.data().j;if(typeof j==='string')FDOCS[d.id]=j});
- db=fbJoin(FDOCS);fbNorm();FLAST=cln(db);
- const L=Object.keys(FDOCS).length?null:Store.load();
+async function fbSnap(snap,first){
+ const ch=first?snap.docs.map(d=>[d.id,d]):snap.docChanges().map(c=>[c.doc.id,c.type==='removed'?null:c.doc]),R={};
+ await Promise.all(ch.map(async([id,d])=>{if(!d){R[id]='';return}try{R[id]=await fbDec(d.data().j)}catch(e){R[id]=FBAD}}));
+ if(first){FDOCS=R;await fbFirst();return}
+ Object.assign(FINC,R);if(!FB.t&&!FB.busy)fbApply();
+}
+async function fbFirst(){
+ db=fbJoin(FDOCS);fbNorm();
+ const live=Object.values(FDOCS).some(v=>v&&v!==FBAD),L=live?null:Store.load();
  FB.ready=true;fbDone();render();fbStatus('ok');
- if(L&&Array.isArray(L.employees)&&L.employees.length&&FB.role!=='viewer'){
+ if(L&&Array.isArray(L.employees)&&L.employees.length){
   if(await ask({title:'بيانات على الجهاز',msg:`لقينا بيانات محفوظة على الجهاز ده (${fmt(L.employees.length)} موظف) والسحابة فاضية. ترفعها للسحابة؟`,ok:'ارفع البيانات',icon:'☁️'})){
-   db=Object.assign(fbJoin({}),L);fbNorm();FLAST=null;render();await fbFlush();
-   if(await ask({title:'مسح النسخة المحلية',msg:'تم الرفع. تمسح النسخة اللي على الجهاز؟ (يفضّل، عشان البيانات متفضلش مكشوفة على الجهاز)',ok:'امسحها',danger:1}))try{localStorage.removeItem(Store.key)}catch(e){}
+   db=Object.assign(fbJoin({}),L);fbNorm();render();await fbFlush();
+   if(await ask({title:'مسح النسخة المحلية',msg:'تم الرفع. تمسح النسخة اللي على الجهاز؟ (يفضّل)',ok:'امسحها',danger:1}))try{localStorage.removeItem(Store.key)}catch(e){}
   }
  }
 }
-/* ===== شاشات الدخول ===== */
-const fbAE=e=>({'auth/invalid-credential':'البريد أو كلمة السر غلط','auth/wrong-password':'البريد أو كلمة السر غلط','auth/user-not-found':'البريد أو كلمة السر غلط','auth/invalid-email':'البريد غير صحيح','auth/too-many-requests':'محاولات كتير، استنى شوية وجرّب تاني','auth/network-request-failed':'مفيش اتصال بالإنترنت','auth/user-disabled':'الحساب ده متوقف'}[e&&e.code]||'حصل خطأ: '+(e&&e.code||''));
+/* ===== شاشات كلمة سر النظام ===== */
 function fbBox(){let o=document.getElementById('fbl');if(!o){o=document.createElement('div');o.id='fbl';o.style.cssText='position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:16px;background:var(--bg);overflow:auto';document.body.appendChild(o)}return o}
 const fbDone=()=>{const o=document.getElementById('fbl');o&&o.remove()};
 function fbLoad(t){fbBox().innerHTML=`<div style="text-align:center"><div class="bm" style="margin:0 auto 14px;animation:spl 1.1s ease-in-out infinite">HR</div><b>${esc(t)}</b></div>`}
-function fbLogin(msg){
- const o=fbBox();
- o.innerHTML=`<div class="md" style="width:min(400px,100%)"><div class="brand" style="justify-content:center;padding:0 0 6px"><div class="bm">HR</div></div><h2 style="text-align:center;margin:6px 0 2px">تسجيل الدخول</h2><p class="sub" style="text-align:center;margin:0 0 16px">نظام الموارد البشرية</p><form novalidate><div class="fl" style="grid-template-columns:1fr"><label>البريد الإلكتروني<input class="in" type="email" name="e" dir="ltr" autocomplete="username"></label><label>كلمة السر<input class="in" type="password" name="p" dir="ltr" autocomplete="current-password"></label></div><small class="hint bad" id="fbm" style="min-height:20px;margin-top:8px">${esc(msg||'')}</small><div class="act" style="justify-content:space-between"><button type="button" class="btn sm" data-r>نسيت كلمة السر؟</button><button class="btn pri">دخول</button></div></form></div>`;
- const f=o.querySelector('form'),m=o.querySelector('#fbm');
- f.onsubmit=async ev=>{ev.preventDefault();const e=f.e.value.trim(),p=f.p.value;if(!e||!p){m.className='hint bad';m.textContent='اكتب البريد وكلمة السر';return}const b=f.querySelector('.pri');b.disabled=true;m.textContent='';try{await FX.Au.signInWithEmailAndPassword(FX.auth,e,p)}catch(x){m.className='hint bad';m.textContent=fbAE(x);b.disabled=false}};
- f.querySelector('[data-r]').onclick=async()=>{const e=f.e.value.trim();if(!e){m.className='hint bad';m.textContent='اكتب بريدك الأول';return}try{await FX.Au.sendPasswordResetEmail(FX.auth,e);m.className='hint ok';m.textContent='لو البريد مسجّل هيوصلك رابط إعادة تعيين كلمة السر'}catch(x){m.className='hint bad';m.textContent=fbAE(x)}};
- f.e.focus();
+function fbMsg(t){fbBox().innerHTML=`<div class="md cfm" style="width:min(440px,100%)"><div class="cfi bad">⚠️</div><p style="color:var(--tx)">${esc(t)}</p><div class="act"><button class="btn pri" onclick="location.reload()">إعادة المحاولة</button></div></div>`}
+function fbGate(msg){
+ const setup=!FB.meta,o=fbBox();
+ o.innerHTML=`<div class="md" style="width:min(420px,100%)"><div class="brand" style="justify-content:center;padding:0 0 6px"><div class="bm">HR</div></div><h2 style="text-align:center;margin:6px 0 2px">${setup?'إعداد كلمة سر النظام':'نظام الموارد البشرية'}</h2><p class="sub" style="text-align:center;margin:0 0 14px">${setup?'البيانات بتتشفّر بالكلمة دي قبل ما تروح السحابة. لو نسيتها البيانات مش هتترجع أبدًا.':'اكتب كلمة سر النظام'}</p><form novalidate><div class="fl" style="grid-template-columns:1fr"><label>كلمة السر<input class="in" type="password" name="p" dir="ltr" autocomplete="${setup?'new-password':'current-password'}"></label>${setup?'<label>تأكيد كلمة السر<input class="in" type="password" name="p2" dir="ltr" autocomplete="new-password"></label>':''}</div><label style="display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--mut);font-size:13px"><input type="checkbox" name="rm" checked>افتكرني على الجهاز ده</label><small class="hint bad" id="fbm" style="min-height:20px;margin-top:8px">${esc(msg||'')}</small><div class="act"><button class="btn pri">${setup?'إنشاء':'فتح'}</button></div></form></div>`;
+ const f=o.querySelector('form'),m=o.querySelector('#fbm'),bad=t=>{m.textContent=t;f.querySelector('.pri').disabled=false};
+ f.elements.p.focus();
+ f.onsubmit=async ev=>{
+  ev.preventDefault();const p=f.elements.p.value;f.querySelector('.pri').disabled=true;m.textContent='';
+  try{
+   if(setup){
+    if(p.length<10)return bad('كلمة السر لازم 10 حروف على الأقل (كل ما كانت أطول كان أأمن)');
+    if(p!==f.elements.p2.value)return bad('كلمتين السر مش متطابقين');
+    const salt=crypto.getRandomValues(new Uint8Array(16));FB.key=await fbKey(p,salt);
+    const meta={salt:fbB2S(salt),chk:await fbEnc('HR-OK'),v:1};
+    try{await FX.Fs.setDoc(dr('meta','key'),meta)}
+    catch(e){if(e.code==='permission-denied'){const s=await FX.Fs.getDoc(dr('meta','key'));FB.meta=s.exists()?s.data():null;FB.key=null;return fbGate('فيه كلمة سر متعمله قبل كده. اكتبها لفتح النظام.')}throw e}
+    FB.meta=meta;
+   }else{
+    FB.key=await fbKey(p,fbS2B(FB.meta.salt));
+    let ok=false;try{ok=(await fbDec(FB.meta.chk))==='HR-OK'}catch(e){}
+    if(!ok){FB.key=null;return bad('كلمة السر غلط')}
+   }
+   if(f.elements.rm.checked){try{localStorage.setItem('hr_fbk',fbB2S(new Uint8Array(await crypto.subtle.exportKey('raw',FB.key))))}catch(e){}}
+   fbStart();
+  }catch(e){bad('حصل خطأ: '+(e.code||e.message||''))}
+ };
 }
-function fbNoAccess(msg){
- const o=fbBox();
- o.innerHTML=`<div class="md cfm" style="width:min(440px,100%)"><div class="cfi bad">🔒</div><h2>حسابك لسه مش مفعّل</h2><p>${esc(msg||'اطلب من مدير النظام يضيف حسابك ويديك صلاحية.')}</p><p class="hint" dir="ltr" style="user-select:all;word-break:break-all">UID: ${esc(FB.user.uid)}</p><div class="act"><button class="btn" data-o>تسجيل خروج</button><button class="btn pri" data-b>أنا مدير النظام الأول</button></div></div>`;
- o.querySelector('[data-o]').onclick=fbLogout;o.querySelector('[data-b]').onclick=fbBootAdmin;
-}
-async function fbBootAdmin(){
- if(!await ask({title:'إنشاء مدير النظام',msg:'ده بيشتغل لأول مستخدم بس. لو فيه مدير موجود هيترفض. تكمّل؟',ok:'كمّل',icon:'🔑'}))return;
- const u=FB.user,b=FX.Fs.writeBatch(FX.db);
- b.set(dr('users',u.uid),{role:'admin',email:(u.email||'').toLowerCase(),name:(u.email||'مدير').split('@')[0],at:FX.Fs.serverTimestamp()});
- b.set(dr('meta','bootstrap'),{by:u.uid,at:FX.Fs.serverTimestamp()});
- try{await b.commit();location.reload()}catch(e){toast('مينفعش: فيه مدير موجود بالفعل. اطلب منه يضيفك.','warn')}
-}
-function fbLogout(){FX.Au.signOut(FX.auth).then(()=>location.reload())}
-function fbRoleUI(){
- document.body.classList.toggle('ro',FB.role==='viewer');
- ['users','audit'].forEach(k=>{const i=VIEWS.findIndex(v=>v[0]===k);if(i>-1)VIEWS.splice(i,1)});
- if(FB.role==='admin')VIEWS.push(['users','المستخدمين والصلاحيات'],['audit','سجل العمليات']);
- Object.assign(ICO,{users:'🔐',audit:'📜'});
- if(!GR[4][1].includes('users'))GR[4][1].push('users','audit');
- if(!VIEWS.some(v=>v[0]===view))view='dash';
-}
-async function fbAuth(u){
- if(FB.unsub){FB.unsub();FB.unsub=null}FB.ready=false;
- if(!u){FB.user=null;FB.role='';fbLogin();return}
- FB.user=u;fbLoad('بنحمّل بياناتك...');
- let s;try{s=await FX.Fs.getDoc(dr('users',u.uid))}catch(e){return fbNoAccess('تعذّر قراءة حسابك ('+(e.code||'')+')')}
- if(!s.exists())return fbNoAccess();
- const d=s.data();FB.role=['admin','editor','viewer'].includes(d.role)?d.role:'viewer';FB.name=d.name||u.email||'';
- fbRoleUI();fbListen();
-}
+function fbStart(){fbLoad('بنحمّل بياناتك...');FB.ready=false;fbListen()}
+function fbLock(){try{localStorage.removeItem('hr_fbk')}catch(e){}location.reload()}
 async function fbBoot(){
  fbLoad('بنتصل بالسحابة...');
+ if(!(window.crypto&&crypto.subtle)){fbMsg('الصفحة لازم تتفتح من رابط https (زي GitHub Pages) أو localhost، مش كملف على الجهاز.');return}
  try{
   const V='10.14.1',U=n=>`https://www.gstatic.com/firebasejs/${V}/firebase-${n}.js`;
-  const [A,Au,Fs]=await Promise.all([import(U('app')),import(U('auth')),import(U('firestore'))]);
+  const [A,Fs]=await Promise.all([import(U('app')),import(U('firestore'))]);
   const app=A.initializeApp(FBCFG);let fdb;
   try{fdb=Fs.initializeFirestore(app,{localCache:Fs.persistentLocalCache({tabManager:Fs.persistentMultipleTabManager()})})}catch(e){fdb=Fs.getFirestore(app)}
-  Object.assign(FX,{A,Au,Fs,app,db:fdb,auth:Au.getAuth(app)});
- }catch(e){fbLogin('تعذّر تحميل فاير بيس. اتأكد من الإنترنت وإن الصفحة شغالة من موقع (مش ملف على الجهاز).');return}
- FX.Au.onAuthStateChanged(FX.auth,fbAuth);
+  Object.assign(FX,{A,Fs,app,db:fdb});
+  const s=await Fs.getDoc(dr('meta','key'));FB.meta=s.exists()?s.data():null;
+ }catch(e){fbMsg('تعذّر الاتصال بفاير بيس ('+(e.code||e.message||'')+'). اتأكد من الإنترنت، ومن إنك عملت Firestore Database ونشرت الـRules.');return}
+ let rk=null;try{rk=localStorage.getItem('hr_fbk')}catch(e){}
+ if(rk&&FB.meta){
+  try{FB.key=await crypto.subtle.importKey('raw',fbS2B(rk),'AES-GCM',true,['encrypt','decrypt']);if((await fbDec(FB.meta.chk))==='HR-OK'){fbStart();return}}catch(e){}
+  FB.key=null;try{localStorage.removeItem('hr_fbk')}catch(e){}
+ }
+ fbGate();
 }
-/* ===== ربط الحفظ بالسحابة ===== */
+/* ===== ربط الحفظ والشريط العلوي ===== */
 const _ss6=Store.save;
-Store.save=function(d){
- if(!FB.on)return _ss6.call(Store,d);
- if(!FB.ready)return;
- alChk();
- if(FB.role==='viewer'){toast('صلاحيتك عرض فقط، التغيير ده مش هيتحفظ','warn');setTimeout(()=>{db=fbJoin(FDOCS);fbNorm();render()},0);return}
- fbQueue();
-};
+Store.save=function(d){if(!FB.on)return _ss6.call(Store,d);if(!FB.ready)return;alChk();fbQueue()};
 const _r6=render;
 render=function(){
- _r6();if(!FB.on||!FB.user)return;
- const u=document.querySelector('.sfu');
- if(u){const b=u.querySelector('b'),s=u.querySelector('small'),a=u.querySelector('.av');if(b)b.textContent=FB.name||'';if(s)s.textContent=ROLES[FB.role]||'';if(a)a.textContent=(FB.name||'?').trim()[0]}
+ _r6();if(!FB.on||!FB.ready)return;
  const tb=document.getElementById('tb');
  if(tb&&!tb.querySelector('#fbs')){
   const s=document.createElement('span');s.id='fbs';s.className='tag';tb.insertBefore(s,tb.querySelector('.clk'));
-  const o=document.createElement('button');o.className='ib';o.id='fbo';o.title='تسجيل خروج';o.setAttribute('aria-label','تسجيل خروج');o.textContent='⎋';o.onclick=fbLogout;tb.appendChild(o);
+  const o=document.createElement('button');o.className='ib';o.title='قفل النظام';o.setAttribute('aria-label','قفل النظام');o.textContent='🔒';o.onclick=fbLock;tb.appendChild(o);
   fbStatus(FB.st||'ok');
  }
 };
-/* ===== المستخدمين والصلاحيات (مدير النظام بس) ===== */
-function vUsers(){
- setTimeout(usersLoad,0);
- return head('المستخدمين والصلاحيات','مين يدخل السيستم وبيعمل إيه',`<div class="bar"><span class="sp"></span><button class="btn" onclick="userLink()">ربط حساب موجود</button><button class="btn pri" onclick="userForm()">+ مستخدم جديد</button></div>`)+'<div id="ul"><div class="card empty">بنحمّل…</div></div>';
-}
-async function usersLoad(){
- const box=document.getElementById('ul');if(!box)return;
- try{
-  const s=await FX.Fs.getDocs(cr('users'));FUL=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.email||'').localeCompare(b.email||''));
-  const el=document.getElementById('ul');if(!el)return;
-  el.innerHTML=`<div class="tw"><table><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th></th></tr>${FUL.map(u=>{const me=u.id===FB.user.uid;return `<tr><td>${esc(u.name||'—')}${me?' <span class="tag ok">أنت</span>':''}</td><td dir="ltr" style="text-align:right">${esc(u.email||'')}</td><td>${me?esc(ROLES[u.role]||''):`<select class="in" onchange="userRole('${u.id}',this.value)">${Object.entries(ROLES).map(([k,v])=>`<option value="${k}" ${u.role===k?'selected':''}>${v}</option>`).join('')}</select>`}</td><td>${me?'':`<button class="btn sm bad" onclick="userDel('${u.id}')">إلغاء الوصول</button>`}</td></tr>`}).join('')}</table></div><div class="card" style="margin-top:14px"><small class="hint">مدير النظام: كل حاجة + المستخدمين + سجل العمليات. محرر: يضيف ويعدّل ويحذف. عرض فقط: يشوف من غير ما يعدّل. الصلاحيات دي مفروضة من قواعد فاير بيس نفسها.</small></div>`;
- }catch(e){box.innerHTML='<div class="card empty">تعذّر تحميل المستخدمين ('+esc(e.code||'')+')</div>'}
-}
-async function userCreate(d){
- const sec=FX.A.initializeApp(FBCFG,'sec'+Date.now());
- try{
-  const a2=FX.Au.getAuth(sec),c=await FX.Au.createUserWithEmailAndPassword(a2,d.email.trim(),d.pw);
-  await FX.Fs.setDoc(dr('users',c.user.uid),{role:d.role,email:d.email.trim().toLowerCase(),name:d.name.trim(),at:FX.Fs.serverTimestamp(),by:FB.user.uid});
-  await FX.Au.signOut(a2);
- }finally{FX.A.deleteApp(sec).catch(()=>{})}
-}
-function userForm(){
- modal('مستخدم جديد',`<div class="fl"><label class="w">الاسم<input class="in" name="name" required maxlength="40" data-k="txt"></label><label class="w">البريد الإلكتروني<input class="in" type="email" name="email" required dir="ltr" data-k="mail" autocomplete="off"><small class="hint"></small></label><label>كلمة سر مؤقتة<input class="in" type="text" name="pw" required minlength="8" maxlength="40" dir="ltr" autocomplete="off"></label><label>الصلاحية<select class="in" name="role"><option value="editor">محرر</option><option value="viewer">عرض فقط</option><option value="admin">مدير النظام</option></select></label></div><small class="hint">بيدخل بالبريد وكلمة السر دي، وبعدين يغيّرها من «نسيت كلمة السر».</small>`,async d=>{
-  try{await userCreate(d);toast('تم إنشاء حساب '+d.name.trim());usersLoad();return true}
-  catch(e){toast({'auth/email-already-in-use':'البريد ده ليه حساب قبل كده. اطلب منه يدخل ويبعتلك الـUID، وبعدين استخدم «ربط حساب موجود»','auth/weak-password':'كلمة السر ضعيفة','auth/invalid-email':'البريد غير صحيح'}[e.code]||'تعذّر الإنشاء ('+(e.code||e.message)+')','bad');return false}
- });
-}
-function userLink(){
- modal('ربط حساب موجود',`<div class="fl"><label class="w">الاسم<input class="in" name="name" required maxlength="40" data-k="txt"></label><label class="w">البريد<input class="in" type="email" name="email" required dir="ltr" data-k="mail"><small class="hint"></small></label><label class="w">UID (بيظهر لصاحب الحساب في شاشة «حسابك لسه مش مفعّل»)<input class="in" name="uid" required minlength="20" maxlength="40" dir="ltr" autocomplete="off"></label><label>الصلاحية<select class="in" name="role"><option value="editor">محرر</option><option value="viewer">عرض فقط</option><option value="admin">مدير النظام</option></select></label></div>`,async d=>{
-  try{await FX.Fs.setDoc(dr('users',d.uid.trim()),{role:d.role,email:d.email.trim().toLowerCase(),name:d.name.trim(),at:FX.Fs.serverTimestamp(),by:FB.user.uid});toast('تم ربط الحساب');usersLoad();return true}
-  catch(e){toast('تعذّر الربط ('+(e.code||'')+')','bad');return false}
- });
-}
-async function userRole(id,r){
- if(r==='admin'&&!await ask({title:'ترقية لمدير',msg:'المدير يقدر يعمل كل حاجة ويضيف ويشيل مستخدمين. متأكد؟',ok:'ترقية',icon:'🔑'}))return usersLoad();
- try{await FX.Fs.updateDoc(dr('users',id),{role:r});toast('تم تغيير الصلاحية')}catch(e){toast('تعذّر التغيير ('+(e.code||'')+')','bad');usersLoad()}
-}
-async function userDel(id){
- const u=FUL.find(x=>x.id===id)||{};
- if(!await ask({title:'إلغاء وصول مستخدم',msg:`${u.name||u.email||'المستخدم'} مش هيقدر يدخل السيستم. (حساب الدخول نفسه بيفضل في Firebase Authentication، تقدر تمسحه من الـConsole).`,ok:'إلغاء الوصول',danger:1,icon:'🚫'}))return;
- try{await FX.Fs.deleteDoc(dr('users',id));toast('تم إلغاء الوصول');usersLoad()}catch(e){toast('تعذّر ('+(e.code||'')+')','bad')}
-}
-/* ===== سجل العمليات (مدير النظام بس) ===== */
-function vAudit(){
- setTimeout(auditLoad,0);
- return head('سجل العمليات','آخر 150 عملية على البيانات، بالمستخدم والوقت',`<div class="bar"><span class="sp"></span><button class="btn" onclick="auditLoad()">تحديث</button></div>`)+'<div id="al"><div class="card empty">بنحمّل…</div></div>';
-}
-async function auditLoad(){
- const box=document.getElementById('al');if(!box)return;
- try{
-  const s=await FX.Fs.getDocs(FX.Fs.query(cr('audit'),FX.Fs.orderBy('ts','desc'),FX.Fs.limit(150))),el=document.getElementById('al');if(!el)return;
-  const L=s.docs.map(d=>d.data());
-  el.innerHTML=L.length?`<div class="tw"><table style="min-width:760px"><tr><th>الوقت</th><th>المستخدم</th><th>العملية</th></tr>${L.map(a=>{const t=a.ts&&a.ts.toDate?a.ts.toDate().toLocaleString('ar-EG',{dateStyle:'medium',timeStyle:'short'}):'الآن';return `<tr><td>${esc(t)}</td><td dir="ltr" style="text-align:right">${esc(a.email||'')}</td><td style="white-space:normal">${(a.items||[]).map(x=>esc(x)).join('<br>')}</td></tr>`}).join('')}</table></div>`:'<div class="card empty">مفيش عمليات متسجلة لسه.</div>';
- }catch(e){box.innerHTML='<div class="card empty">تعذّر تحميل السجل ('+esc(e.code||'')+')</div>'}
-}
 if(FB.on)fbBoot();
 render();
 </script>
